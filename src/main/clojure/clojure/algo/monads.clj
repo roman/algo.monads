@@ -107,7 +107,6 @@
     (cond
       (identical? bform :when)  `(if ~expr ~mexpr ~'m-zero)
       (identical? bform :let)   `(let ~expr ~mexpr)
-      (nil? step)               mexpr
       (identical? bform :then)  mexpr
       ; ^ ignore :then step (processed on the :else step)
       (identical? bform :if)    mexpr
