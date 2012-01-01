@@ -10,9 +10,53 @@
 
 (ns clojure.algo.test-monads
   (:use [clojure.test :only (deftest is are run-tests)]
-  [clojure.algo.monads
-   :only (with-monad domonad m-lift m-seq m-chain writer-m write
-    sequence-m maybe-m state-m maybe-t sequence-t)]))
+        [clojure.algo.monads
+          :only
+          (with-monad domonad m-lift m-seq m-chain writer-m write
+           sequence-m maybe-m state-m maybe-t sequence-t)]))
+
+
+(deftest domonad-if-then
+  (let [monad-value (domonad maybe-m
+                      [ a 5
+                        :let [c 7] 
+                        :if (and (= a 5) (= c 7))
+                        :then [
+                          b 6
+                        ]
+                        :else [
+                          b nil
+                        ]]
+                      [a b])]
+  (is (= monad-value [5 6]))))
+
+
+(deftest domonad-if-else
+  (let [monad-value (domonad maybe-m
+                      [ a 5
+                        :when (= a 5) 
+                        :if (= a 1)
+                        :then [
+                          b 6]
+                        :else [
+                          b nil]]
+                      [a b])]
+  (is (= monad-value nil))))
+
+;(deftest domonad-do
+;  (let [monad-value1 (domonad maybe-m
+;                       [ a 5
+;                         :do 3
+;                         b 4]
+;                         [a b])
+;        monad-value2 (domonad maybe-m
+;                       [ a 5
+;                         :do nil
+;                         b 4]
+;                         [a b])]
+;    (is (= monad-value1 [5 4]))
+;    (is (= monad-value1 nil))))
+
 
 (deftest sequence-monad
   (with-monad sequence-m

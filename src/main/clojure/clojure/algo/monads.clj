@@ -31,31 +31,31 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defmacro monad
-   "Define a monad by defining the monad operations. The definitions
-    are written like bindings to the monad operations m-bind and
-    m-result (required) and m-zero and m-plus (optional)."
-   [operations]
-   `(let [~'m-bind   ::undefined
-    ~'m-result ::undefined
-    ~'m-zero   ::undefined
-    ~'m-plus   ::undefined
-    ~@operations]
-      {:m-result ~'m-result
-       :m-bind ~'m-bind 
-       :m-zero ~'m-zero
-       :m-plus ~'m-plus}))
+ "Define a monad by defining the monad operations. The definitions
+  are written like bindings to the monad operations m-bind and
+  m-result (required) and m-zero and m-plus (optional)."
+ [operations]
+ `(let [~'m-bind   ::undefined
+  ~'m-result ::undefined
+  ~'m-zero   ::undefined
+  ~'m-plus   ::undefined
+  ~@operations]
+    {:m-result ~'m-result
+     :m-bind ~'m-bind
+     :m-zero ~'m-zero
+     :m-plus ~'m-plus}))
 
 (defmacro defmonad
-   "Define a named monad by defining the monad operations. The definitions
-    are written like bindings to the monad operations m-bind and
-    m-result (required) and m-zero and m-plus (optional)."
+ "Define a named monad by defining the monad operations. The definitions
+  are written like bindings to the monad operations m-bind and
+  m-result (required) and m-zero and m-plus (optional)."
 
-   ([name doc-string operations]
-    (let [doc-name (with-meta name {:doc doc-string})]
-      `(defmonad ~doc-name ~operations)))
+ ([name doc-string operations]
+  (let [doc-name (with-meta name {:doc doc-string})]
+    `(defmonad ~doc-name ~operations)))
 
-   ([name operations]
-    `(def ~name (monad ~operations))))
+ ([name operations]
+  `(def ~name (monad ~operations))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -64,14 +64,58 @@
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn- ensure-items [n steps]
+  "Ensures there are at least n elements on a list, will fill up with nil
+  values when list is not big enough."
+  (take n (concat steps (repeat nil))))
+
+(defn- each3-steps [steps]
+  "Transforms a list in a list of triples following the form:
+   [a b c] => [[a b c] [b c nil] [c nil nil]]."
+  (let [n (count steps)]
+  (map vector (ensure-items n steps)
+              (ensure-items n (rest steps))
+              (ensure-items n (rest (rest steps))))))
+
+(def prepare-monadic-steps
+     #(->> % (partition 2) reverse each3-steps))
+
+(defn- if-then-else-statement
+  "Process an if-then-else step when adding a new monadic step to the mexrp."
+  [[[_ else-mexpr]
+    [then-bform then-mexpr]
+    [if-bform   if-conditional]] mexpr continuation]
+    (cond
+      (and (identical? then-bform :then)
+           (identical? if-bform   :if))
+        `(if ~if-conditional
+          ~(reduce continuation
+                   mexpr
+                   (prepare-monadic-steps then-mexpr))
+          ~(reduce continuation
+                   mexpr
+                   (prepare-monadic-steps else-mexpr)))
+      :else
+       (throw (Exception. "invalid :if without :then and :else"))))
+
+
 (defn- add-monad-step
   "Add a monad comprehension step before the already transformed
    monad comprehension expression mexpr."
-  [mexpr step]
-  (let [[bform expr] step]
-    (cond (identical? bform :when)  `(if ~expr ~mexpr ~'m-zero)
-    (identical? bform :let)   `(let ~expr ~mexpr)
-    :else (list 'm-bind expr (list 'fn [bform] mexpr)))))
+  [mexpr steps]
+  (let [[[bform expr :as step] & _] steps]
+    (cond
+      (identical? bform :when)  `(if ~expr ~mexpr ~'m-zero)
+      (identical? bform :let)   `(let ~expr ~mexpr)
+      (nil? step)               mexpr
+      (identical? bform :then)  mexpr
+      ; ^ ignore :then step (processed on the :else step)
+      (identical? bform :if)    mexpr
+      ; ^ ignore :if step (processed on the :else step)
+      (identical? bform :else)
+        (if-then-else-statement steps mexpr add-monad-step)
+      :else
+        (list 'm-bind expr (list 'fn [bform] mexpr)))))
 
 (defn- monad-expr
    "Transforms a monad comprehension, consisting of a list of steps
@@ -82,8 +126,9 @@
    [steps expr]
    (when (odd? (count steps))
      (throw (Exception. "Odd number of elements in monad comprehension steps")))
-   (let [rsteps (reverse (partition 2 steps))
-   [lr ls] (first rsteps)]
+
+   (let [rsteps  (prepare-monadic-steps steps)
+         [[lr ls] & _] (first rsteps)]
      (if (= lr expr)
        ; Optimization: if the result expression is equal to the result
        ; of the last computation step, we can eliminate an m-bind to
@@ -97,31 +142,31 @@
          rsteps))))
 
 (defmacro with-monad
-   "Evaluates an expression after replacing the keywords defining the
-    monad operations by the functions associated with these keywords
-    in the monad definition given by name."
-   [monad & exprs]
-   `(let [name#      ~monad
-    ~'m-bind   (:m-bind name#)
-    ~'m-result (:m-result name#)
-    ~'m-zero   (:m-zero name#)
-    ~'m-plus   (:m-plus name#)]
-      (with-symbol-macros ~@exprs)))
+  "Evaluates an expression after replacing the keywords defining the
+   monad operations by the functions associated with these keywords
+   in the monad definition given by name."
+  [monad & exprs]
+  `(let [name#      ~monad
+   ~'m-bind   (:m-bind name#)
+   ~'m-result (:m-result name#)
+   ~'m-zero   (:m-zero name#)
+   ~'m-plus   (:m-plus name#)]
+     (with-symbol-macros ~@exprs)))
 
 (defmacro domonad
-   "Monad comprehension. Takes the name of a monad, a vector of steps
-    given as binding-form/monadic-expression pairs, and a result value
-    specified by expr. The monadic-expression terms can use the binding
-    variables of the previous steps.
-    If the monad contains a definition of m-zero, the step list can also
-    contain conditions of the form :when p, where the predicate p can
-    contain the binding variables from all previous steps.
-    A clause of the form :let [binding-form expr ...], where the bindings
-    are given as a vector as for the use in let, establishes additional
-    bindings that can be used in the following steps."
-   ([steps expr]
+  "Monad comprehension. Takes the name of a monad, a vector of steps
+   given as binding-form/monadic-expression pairs, and a result value
+   specified by expr. The monadic-expression terms can use the binding
+   variables of the previous steps.
+   If the monad contains a definition of m-zero, the step list can also
+   contain conditions of the form :when p, where the predicate p can
+   contain the binding variables from all previous steps.
+   A clause of the form :let [binding-form expr ...], where the bindings
+   are given as a vector as for the use in let, establishes additional
+   bindings that can be used in the following steps."
+  ([steps expr]
     (monad-expr steps expr))
-   ([name steps expr]
+  ([name steps expr]
     (let [mexpr (monad-expr steps expr)]
       `(with-monad ~name ~mexpr))))
 
@@ -149,13 +194,13 @@
       exprs           (map second options)
       ]
   `(do
-     (defsymbolmacro ~name (partial ~fn-name ~'m-bind ~'m-result 
+     (defsymbolmacro ~name (partial ~fn-name ~'m-bind ~'m-result
                                                    ~'m-zero ~'m-plus))
      (defn ~fn-name ~@(map make-fn-body arglists exprs))))
       ; single arity
       (let [[args expr] options]
   `(do
-     (defsymbolmacro ~name (partial ~fn-name ~'m-bind ~'m-result 
+     (defsymbolmacro ~name (partial ~fn-name ~'m-bind ~'m-result
                                                    ~'m-zero ~'m-plus))
      (defn ~fn-name ~@(make-fn-body args expr)))))))
 
@@ -201,7 +246,7 @@
   (reduce (fn [q p]
       (m-bind p (fn [x]
       (m-bind q (fn [y]
-            (m-result (cons x y)))) )))
+            (m-result (cons x y)))))))
     (m-result '())
     (reverse ms)))
 
@@ -514,7 +559,7 @@
   :m-zero (with-monad ~base ~'m-zero)
   :m-plus (with-monad ~base ~'m-plus))
       combined-monad#)))
-       
+
 (defn maybe-t
   "Monad transformer that transforms a monad m into a monad in which
    the base values can be invalid (represented by nothing, which defaults
