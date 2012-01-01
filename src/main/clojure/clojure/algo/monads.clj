@@ -20,8 +20,7 @@
            as macros for defining and using monads and useful monadic
            functions."}
   clojure.algo.monads
-  (:require [clojure.set]
-            [clojure.pprint :as pp])
+  (:require [clojure.set])
   (:use [clojure.tools.macro
          :only (with-symbol-macros defsymbolmacro name-with-attributes)]))
 
@@ -68,14 +67,13 @@
 (defn ensure-items [n steps]
   (take n (concat steps (repeat nil))))
 
-(defn each4-steps [steps]
+(defn each3-steps [steps]
   (let [n (count steps)]
-  (map vector (ensure-items n steps) 
-              (ensure-items n (rest steps)) 
-              (ensure-items n (rest (rest steps)))
-              (ensure-items n (rest (rest (rest steps)))))))
+  (map vector (ensure-items n steps)
+              (ensure-items n (rest steps))
+              (ensure-items n (rest (rest steps))))))
 
-(defn add-monad-step
+(defn- add-monad-step
   "Add a monad comprehension step before the already transformed
    monad comprehension expression mexpr."
   [mexpr steps]
@@ -83,30 +81,34 @@
         [bform expr]        step1
         [bform2 expr2]      step2
         [bform3 expr3]      step3
-        [bform4 expr4]      step4]
-    (cond 
-      (nil? step1)              ~mexpr
+        [bform4 expr4]      step4
+        prepare-steps       #(->> % (partition 2) reverse each3-steps)]
+    (cond
       (identical? bform :when)  `(if ~expr ~mexpr ~'m-zero)
       (identical? bform :let)   `(let ~expr ~mexpr)
+      ;; conditional if-then-else support
+      ; ignore step vector that start with nil
+      (nil? step1)              mexpr
+      ; ignore :then step (processed on the :else step)
+      (identical? bform :then)  mexpr
+      ; ignore :if step (processed on the :else step)
+      (identical? bform :if)    mexpr
+      ; process :if statement starting from the :else
       (and (identical? bform :else)
            (identical? bform2 :then)
            (identical? bform3 :if))
-        (let [x
-          (list 'm-bind expr4 (list 'fn [bform4]
-            `(if ~expr3
-               ~(reduce add-monad-step
-                       mexpr
-                       (each4-steps (reverse (partition 2 expr2))))
-               ~(reduce add-monad-step
-                       mexpr
-                       (each4-steps (reverse (partition 2 expr)))))))]
-          (println (pp/pprint x))
-          x)
+        `(if ~expr3
+          ~(reduce add-monad-step
+                   mexpr
+                   (prepare-steps expr2))
+          ~(reduce add-monad-step
+                   mexpr
+                   (prepare-steps expr)))
+      ; if we are at this case and we didn't enter in the
+      ; previous one, we have a broken build
       (identical? bform :else)
         (throw (Exception. "invalid :if without :then and :else"))
-      (identical? bform :then) mexpr
-      (identical? bform :if) mexpr
-      :else 
+      :else
         (list 'm-bind expr (list 'fn [bform] mexpr)))))
 
 (defn- monad-expr
@@ -121,22 +123,17 @@
 
    (let [rsteps  (reverse (partition 2 steps))
          [lr ls] (first rsteps)]
-      
-     (println "PAY ATTENTION")
-     (println (pp/pprint rsteps))
      (if (= lr expr)
        ; Optimization: if the result expression is equal to the result
        ; of the last computation step, we can eliminate an m-bind to
        ; m-result.
        (reduce add-monad-step
          ls
-         (each4-steps (rest rsteps)))
+         (each3-steps (rest rsteps)))
        ; The general case.
-       (let [result (reduce add-monad-step
+       (reduce add-monad-step
          (list 'm-result expr)
-         (each4-steps rsteps))]
-        (println (pp/pprint result))
-        result))))
+         (each3-steps rsteps)))))
 
 (defmacro with-monad
   "Evaluates an expression after replacing the keywords defining the
