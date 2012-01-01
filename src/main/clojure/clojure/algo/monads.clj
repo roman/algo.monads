@@ -77,7 +77,7 @@
               (ensure-items n (rest steps))
               (ensure-items n (rest (rest steps))))))
 
-(def prepare-monadic-steps
+(def ^:private prepare-monadic-steps
      #(->> % (partition 2) reverse each3-steps))
 
 (defn- if-then-else-statement
